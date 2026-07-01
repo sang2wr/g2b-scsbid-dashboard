@@ -107,6 +107,27 @@ def _amt_str(amt) -> str:
         return "-"
 
 
+@st.dialog("낙찰자 상세정보")
+def show_winner_detail_dialog(row: pd.Series):
+    st.markdown(f"**{row.get('공고명', '-')}**")
+    st.caption(f"{row.get('수요기관', '-')} · 개찰일 {row.get('개찰일', '-')}")
+    st.divider()
+
+    rate = row.get("낙찰율")
+    rate_str = f"{rate:.2f}%" if pd.notnull(rate) else "-"
+
+    st.write(f"**참가업체수**: {row.get('참가업체수', '-')}개")
+    st.write(f"**낙찰자**: {row.get('낙찰자', '-')}")
+    st.write(f"**사업자번호**: {row.get('낙찰자사업자번호', '-')}")
+    st.write(f"**대표자**: {row.get('낙찰자대표자', '-')}")
+    st.write(f"**주소**: {row.get('낙찰자주소', '-')}")
+    st.write(f"**연락처**: {row.get('낙찰자연락처', '-')}")
+    st.write(f"**낙찰금액**: {_amt_str(row.get('낙찰금액'))}")
+    st.write(f"**낙찰율**: {rate_str}")
+
+    st.caption("ℹ️ 나라장터 공공데이터 API는 낙찰자 정보만 제공하며, 낙찰에 실패한 나머지 참가업체 명단은 제공하지 않습니다.")
+
+
 def show_table(data: pd.DataFrame, tab_key: str = "all"):
     df = data.copy()
     df["낙찰금액_표시"] = df["낙찰금액"].apply(_amt_str)
@@ -170,8 +191,21 @@ def show_table(data: pd.DataFrame, tab_key: str = "all"):
     row_h = 35
     tbl_h = min(max(400, 38 + len(df) * row_h), 1400)
 
-    st.dataframe(df[show_cols], column_config=col_cfg, hide_index=True,
-                 use_container_width=True, height=tbl_h)
+    st.caption("💡 행 왼쪽 체크박스를 클릭하면 낙찰자 상세정보를 볼 수 있습니다.")
+    event = st.dataframe(
+        df[show_cols], column_config=col_cfg, hide_index=True,
+        use_container_width=True, height=tbl_h,
+        on_select="rerun", selection_mode="single-row",
+        key=f"tbl_select_{tab_key}",
+    )
+
+    sel_rows = event.selection.rows if event and event.selection else []
+    if sel_rows:
+        row_idx = sel_rows[0]
+        last_key = f"_last_selected_row_{tab_key}"
+        if st.session_state.get(last_key) != row_idx:
+            st.session_state[last_key] = row_idx
+            show_winner_detail_dialog(df.iloc[row_idx])
 
     csv = data.to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
