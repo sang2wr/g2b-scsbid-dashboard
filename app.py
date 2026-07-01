@@ -297,17 +297,36 @@ with st.form("search_form"):
         placeholder="위 목록에 없는 키워드 직접 입력 — 예) 박람회, 세미나",
     )
 
-    c1, c2 = st.columns(2)
-    with c1:
-        min_amount_man = st.number_input(
-            "최소 낙찰금액 (만원, 0=전체)",
-            value=0, min_value=0, step=500,
-        )
-    with c2:
+    min_amount_man = st.number_input(
+        "최소 낙찰금액 (만원, 0=전체)",
+        value=0, min_value=0, step=500,
+    )
+
+    period_mode = st.radio(
+        "개찰일 조회 기간",
+        ["최근 N일", "날짜 직접 지정"],
+        horizontal=True,
+    )
+    days = None
+    start_date = None
+    end_date = None
+    if period_mode == "최근 N일":
         days = st.number_input(
-            "개찰일 기준 조회 기간 (일)",
-            value=7, min_value=1, max_value=60, step=1,
+            "개찰일 기준 조회 기간 (일, 제한 없음)",
+            value=7, min_value=1, step=1,
         )
+    else:
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            start_date = st.date_input(
+                "시작일",
+                value=datetime.now().date() - pd.Timedelta(days=7),
+            )
+        with dc2:
+            end_date = st.date_input(
+                "종료일",
+                value=datetime.now().date(),
+            )
 
     excl_input = st.text_input(
         "제외 키워드 (쉼표로 구분)",
@@ -334,12 +353,18 @@ if submitted:
         st.error("🔑 API 키를 입력해주세요. 왼쪽 사이드바(☰)의 'API 키 설정'에 입력하세요.")
         st.stop()
 
+    if start_date and end_date and start_date > end_date:
+        st.error("📅 시작일이 종료일보다 늦습니다. 날짜를 다시 확인해주세요.")
+        st.stop()
+
     with st.spinner("나라장터에서 낙찰정보를 가져오는 중..."):
         df, err = fetch_scsbid(
             api_key=api_key,
             keywords=keywords,
             min_amount=min_amount,
             days=days,
+            start_date=start_date,
+            end_date=end_date,
             exclude_words=exclude_words,
         )
 
