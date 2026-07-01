@@ -269,6 +269,13 @@ with st.sidebar:
     )
 
 # ── 조회 폼 ──────────────────────────────────────────────────────
+# period_mode는 폼 밖에 둬야 선택 즉시 화면이 바뀐다 (폼 안 위젯은 제출 전까지 재실행되지 않음)
+period_mode = st.radio(
+    "개찰일 조회 기간",
+    ["최근 N일", "날짜 직접 지정"],
+    horizontal=True,
+)
+
 with st.form("search_form"):
     st.subheader("🔍 조회 조건")
 
@@ -302,11 +309,6 @@ with st.form("search_form"):
         value=0, min_value=0, step=500,
     )
 
-    period_mode = st.radio(
-        "개찰일 조회 기간",
-        ["최근 N일", "날짜 직접 지정"],
-        horizontal=True,
-    )
     days = None
     start_date = None
     end_date = None
