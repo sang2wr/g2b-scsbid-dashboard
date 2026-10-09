@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 
 from api_client import fetch_scsbid
+import ui_theme
 
 
 @st.cache_data
@@ -46,56 +47,21 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown("""
-<style>
-.metric-card {
-  background:#f0f4ff; border-left:4px solid #1a56db;
-  border-radius:8px; padding:14px 18px; margin-bottom:0;
-}
-.metric-title { font-size:13px; color:#6b7280; margin:0; }
-.metric-value { font-size:28px; font-weight:700; color:#1a56db; margin:4px 0 0; }
-.amount-card  { border-left-color:#065f46 !important; }
-.rate-card    { border-left-color:#b45309 !important; }
-
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.search-box {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 20px 24px;
-  margin-bottom: 24px;
-}
-
-@media (max-width: 768px) {
-  .metric-title { font-size: 12px; }
-  .metric-value { font-size: 22px; }
-
-  .stTabs [data-baseweb="tab"] {
-    font-size: 13px !important;
-    padding: 8px 8px !important;
-  }
-
-  .stButton > button {
-    min-height: 48px !important;
-    font-size: 16px !important;
-  }
-
-  .stTextInput > div > div > input,
-  .stTextArea textarea,
-  .stSelectbox > div > div {
-    font-size: 16px !important;
-  }
-
-  .stDataFrame { overflow-x: auto; }
-}
-</style>
-""", unsafe_allow_html=True)
+# 앱 고유 레이아웃 규칙(KPI 카드) — 색·크기는 공통 토큰(ui_theme.TOKENS)에 맞춤
+_EXTRA_CSS = """
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+.metric-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px 14px;box-shadow:0 1px 2px rgba(10,20,40,.04)}
+.metric-title{font-size:13px;font-weight:600;color:var(--ink-soft);margin:0}
+.metric-value{font-size:30px;font-weight:800;color:var(--navy);margin:4px 0 0;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.metric-card.deadline-critical{border-color:#F3C5C0}
+.metric-card.deadline-critical .metric-value{color:var(--danger)}
+.metric-card.deadline-soon{border-color:#F5D9B5}
+.metric-card.deadline-soon .metric-value{color:var(--warn)}
+.metric-card.amount-card .metric-value{color:var(--teal-dark)}
+.metric-card.rate-card .metric-value{color:var(--warn)}
+@media (max-width:768px){.metric-value{font-size:24px}.stDataFrame{overflow-x:auto}}
+"""
+ui_theme.inject(_EXTRA_CSS)
 
 
 # ── 헬퍼 함수 ────────────────────────────────────────────────────
@@ -125,7 +91,7 @@ def show_winner_detail_dialog(row: pd.Series):
     st.write(f"**낙찰금액**: {_amt_str(row.get('낙찰금액'))}")
     st.write(f"**낙찰율**: {rate_str}")
 
-    st.caption("ℹ️ 나라장터 공공데이터 API는 낙찰자 정보만 제공하며, 낙찰에 실패한 나머지 참가업체 명단은 제공하지 않습니다.")
+    st.caption("나라장터 공공데이터 API는 낙찰자 정보만 제공하며, 낙찰에 실패한 나머지 참가업체 명단은 제공하지 않습니다.")
 
 
 def show_table(data: pd.DataFrame, tab_key: str = "all"):
@@ -191,7 +157,7 @@ def show_table(data: pd.DataFrame, tab_key: str = "all"):
     row_h = 35
     tbl_h = min(max(400, 38 + len(df) * row_h), 1400)
 
-    st.caption("💡 행 왼쪽 체크박스를 클릭하면 낙찰자 상세정보를 볼 수 있습니다.")
+    st.caption("행 왼쪽 체크박스를 클릭하면 낙찰자 상세정보를 볼 수 있습니다.")
     event = st.dataframe(
         df[show_cols], column_config=col_cfg, hide_index=True,
         use_container_width=True, height=tbl_h,
@@ -209,7 +175,7 @@ def show_table(data: pd.DataFrame, tab_key: str = "all"):
 
     csv = data.to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
-        "⬇️ CSV로 저장",
+        "⬇ CSV로 저장",
         data=csv,
         file_name=f"나라장터_낙찰정보_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
         mime="text/csv",
@@ -224,12 +190,12 @@ def show_winner_rank(data: pd.DataFrame):
 
     with col_a:
         st.subheader("낙찰 건수 상위 낙찰자 (Top 15)")
-        st.bar_chart(data["낙찰자"].value_counts().head(15))
+        st.bar_chart(data["낙찰자"].value_counts().head(15), color=ui_theme.CHART_COLORS[0])
 
     with col_b:
         st.subheader("낙찰 금액 합계 상위 낙찰자 (Top 15)")
         top_amt = data.groupby("낙찰자")["낙찰금액"].sum().sort_values(ascending=False).head(15)
-        st.bar_chart(top_amt)
+        st.bar_chart(top_amt, color=ui_theme.CHART_COLORS[0])
 
     st.subheader("낙찰자별 상세")
     summary = (
@@ -257,7 +223,7 @@ def show_stats(data: pd.DataFrame):
     with col_a:
         st.subheader("수요기관별 낙찰 건수 (상위 10)")
         if "수요기관" in data.columns:
-            st.bar_chart(data["수요기관"].value_counts().head(10))
+            st.bar_chart(data["수요기관"].value_counts().head(10), color=ui_theme.CHART_COLORS[0])
 
     with col_b:
         st.subheader("낙찰금액 구간별 분포")
@@ -267,7 +233,7 @@ def show_stats(data: pd.DataFrame):
                 bins=[0, 5e7, 1e8, 3e8, 5e8, float("inf")],
                 labels=["5천만↓", "5천~1억", "1~3억", "3~5억", "5억↑"],
             )
-            st.bar_chart(bins.value_counts().sort_index())
+            st.bar_chart(bins.value_counts().sort_index(), color=ui_theme.CHART_COLORS[0])
 
     if "낙찰율" in data.columns:
         st.subheader("낙찰율 분포")
@@ -276,7 +242,7 @@ def show_stats(data: pd.DataFrame):
             bins=[0, 80, 85, 88, 90, 95, 100],
             labels=["~80%", "80~85%", "85~88%", "88~90%", "90~95%", "95~100%"],
         )
-        st.bar_chart(rate_bins.value_counts().sort_index())
+        st.bar_chart(rate_bins.value_counts().sort_index(), color=ui_theme.CHART_COLORS[0])
 
     if "개찰일시" in data.columns:
         st.subheader("일자별 낙찰 건수")
@@ -284,7 +250,7 @@ def show_stats(data: pd.DataFrame):
             data.assign(날짜=data["개찰일시"].dt.date)
             .groupby("날짜").size().rename("건수")
         )
-        st.bar_chart(daily)
+        st.bar_chart(daily, color=ui_theme.CHART_COLORS[0])
 
 
 # ── 메인 ─────────────────────────────────────────────────────────
@@ -293,7 +259,7 @@ st.caption("용역 부문 낙찰정보(개찰완료 건) 조회 — 낙찰자 ·
 
 # ── API 키: 사이드바에 숨김 ───────────────────────────────────────
 with st.sidebar:
-    st.subheader("🔑 API 키 설정")
+    st.subheader("API 키 설정")
     api_key = st.text_input(
         "공공데이터포털 API 키",
         value=DEFAULT_API_KEY,
@@ -311,12 +277,12 @@ period_mode = st.radio(
 )
 
 with st.form("search_form"):
-    st.subheader("🔍 조회 조건")
+    st.subheader("조회 조건")
 
     preset_groups = load_keyword_presets()
 
     if preset_groups:
-        st.markdown("**🔖 우선순위별 키워드 선택** (OR 검색 — 선택한 키워드 중 하나라도 포함된 공고 조회)")
+        st.markdown("**우선순위별 키워드 선택** (OR 검색 — 선택한 키워드 중 하나라도 포함된 공고 조회)")
         grp_cols = st.columns(len(preset_groups))
         sel_all = []
         for i, (grp_name, options) in enumerate(preset_groups):
@@ -370,7 +336,7 @@ with st.form("search_form"):
         placeholder="예) 시담, 재공고",
     )
 
-    submitted = st.form_submit_button("🔄 낙찰정보 조회", use_container_width=True, type="primary")
+    submitted = st.form_submit_button("낙찰정보 조회", use_container_width=True, type="primary")
 
 # ── 조회 처리 ─────────────────────────────────────────────────────
 if submitted:
@@ -386,11 +352,11 @@ if submitted:
     min_amount = min_amount_man * 10_000
 
     if not api_key:
-        st.error("🔑 API 키를 입력해주세요. 왼쪽 사이드바(☰)의 'API 키 설정'에 입력하세요.")
+        st.error("API 키를 입력해주세요. 왼쪽 사이드바(☰)의 'API 키 설정'에 입력하세요.")
         st.stop()
 
     if start_date and end_date and start_date > end_date:
-        st.error("📅 시작일이 종료일보다 늦습니다. 날짜를 다시 확인해주세요.")
+        st.error("시작일이 종료일보다 늦습니다. 날짜를 다시 확인해주세요.")
         st.stop()
 
     with st.spinner("나라장터에서 낙찰정보를 가져오는 중..."):
@@ -411,7 +377,7 @@ if submitted:
 
 # ── 결과 표시 ─────────────────────────────────────────────────────
 if "df" not in st.session_state:
-    st.info("⬆️ 조회 조건을 입력하고 **낙찰정보 조회** 버튼을 눌러주세요.")
+    st.info("조회 조건을 입력하고 **낙찰정보 조회** 버튼을 눌러주세요.")
     st.stop()
 
 if "last_updated" in st.session_state:
@@ -448,13 +414,13 @@ st.markdown(f"""
     <p class="metric-title">전체 낙찰 건수</p>
     <p class="metric-value">{total}건</p>
   </div>
-  <div class="metric-card amount-card" style="color:#065f46;">
+  <div class="metric-card amount-card">
     <p class="metric-title">총 낙찰금액</p>
-    <p class="metric-value" style="color:#065f46;">{total_amount/100_000_000:.1f}억</p>
+    <p class="metric-value">{total_amount/100_000_000:.1f}억</p>
   </div>
-  <div class="metric-card rate-card" style="color:#b45309;">
+  <div class="metric-card rate-card">
     <p class="metric-title">평균 낙찰율</p>
-    <p class="metric-value" style="color:#b45309;">{f"{avg_rate:.1f}%" if avg_rate is not None and pd.notnull(avg_rate) else "-"}</p>
+    <p class="metric-value">{f"{avg_rate:.1f}%" if avg_rate is not None and pd.notnull(avg_rate) else "-"}</p>
   </div>
   <div class="metric-card">
     <p class="metric-title">평균 참가업체수</p>
@@ -465,7 +431,7 @@ st.markdown(f"""
 
 st.divider()
 
-tab1, tab2, tab3 = st.tabs(["📋 전체 목록", "🏆 낙찰자 순위", "📊 통계"])
+tab1, tab2, tab3 = st.tabs(["전체 목록", "낙찰자 순위", "통계"])
 
 with tab1:
     show_table(df, tab_key="all")
