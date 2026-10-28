@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import hmac
 import os
 
 from api_client import fetch_scsbid
@@ -24,21 +25,30 @@ def load_keyword_presets():
         return []
 
 
-def _load_env_key() -> str:
+def _load_setting(name: str) -> str:
+    """st.secrets → .env 순으로 설정값을 읽는다 (값은 서버 안에서만 사용)."""
     try:
-        return st.secrets.get("G2B_API_KEY", "") or ""
+        val = st.secrets.get(name, "") or ""
+        if val:
+            return str(val)
     except Exception:
         pass
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(env_path):
-        for line in open(env_path, encoding="utf-8"):
-            line = line.strip()
-            if line.startswith("G2B_API_KEY="):
-                return line.split("=", 1)[1].strip()
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"{name}="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
     return ""
 
 
-DEFAULT_API_KEY = _load_env_key()
+SERVER_API_KEY = _load_setting("G2B_API_KEY")
+ACCESS_PASSWORD = _load_setting("APP_ACCESS_PASSWORD")
+
+MAX_DAYS = 3650        # 조회기간 상한 (일)
+MAX_KEYWORDS = 30      # 1회 조회 키워드 상한
+MAX_TEXT_LEN = 50      # 키워드 1개 최대 길이
 
 st.set_page_config(
     page_title="나라장터 낙찰정보 대시보드",
@@ -62,6 +72,34 @@ _EXTRA_CSS = """
 @media (max-width:768px){.metric-value{font-size:24px}.stDataFrame{overflow-x:auto}}
 """
 ui_theme.inject(_EXTRA_CSS)
+
+
+def _require_access() -> None:
+    """APP_ACCESS_PASSWORD가 설정된 경우 일치해야 앱을 사용할 수 있다 (미설정 시 공개)."""
+    if not ACCESS_PASSWORD or st.session_state.get("_authed"):
+        return
+    st.title("상상우리 나라장터 낙찰정보 조회")
+    with st.form("login_form"):
+        pw = st.text_input("접속 비밀번호", type="password")
+        if st.form_submit_button("확인"):
+            if hmac.compare_digest(pw.encode("utf-8"), ACCESS_PASSWORD.encode("utf-8")):
+                st.session_state["_authed"] = True
+                st.rerun()
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
+
+
+_require_access()
+
+
+def _csv_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """CSV/엑셀 수식 주입 방지: =,+,-,@ 로 시작하는 문자열 앞에 작은따옴표를 붙인다."""
+    out = df.copy()
+    for col in out.select_dtypes(include="object").columns:
+        out[col] = out[col].map(
+            lambda v: "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+        )
+    return out
 
 
 # ── 헬퍼 함수 ────────────────────────────────────────────────────
@@ -118,9 +156,9 @@ def show_table(data: pd.DataFrame, tab_key: str = "all"):
 
     if q:
         mask = (
-            df["공고명"].str.contains(q, case=False, na=False) |
-            df["낙찰자"].str.contains(q, case=False, na=False) |
-            df["수요기관"].str.contains(q, case=False, na=False)
+            df["공고명"].str.contains(q, case=False, na=False, regex=False) |
+            df["낙찰자"].str.contains(q, case=False, na=False, regex=False) |
+            df["수요기관"].str.contains(q, case=False, na=False, regex=False)
         )
         df = df[mask]
         st.caption(f"'{q}' 필터 결과: {len(df):,}건")
@@ -173,7 +211,7 @@ def show_table(data: pd.DataFrame, tab_key: str = "all"):
             st.session_state[last_key] = row_idx
             show_winner_detail_dialog(df.iloc[row_idx])
 
-    csv = data.to_csv(index=False, encoding="utf-8-sig")
+    csv = _csv_safe(data).to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         "⬇ CSV로 저장",
         data=csv,
@@ -262,9 +300,9 @@ with st.sidebar:
     st.subheader("API 키 설정")
     api_key = st.text_input(
         "공공데이터포털 API 키",
-        value=DEFAULT_API_KEY,
+        value="",
         type="password",
-        placeholder="발급받은 API 키 입력",
+        placeholder="서버 등록 키 사용 중 (직접 입력 시 우선)" if SERVER_API_KEY else "발급받은 API 키 입력",
         help="data.go.kr → 나라장터 낙찰정보서비스 활용신청 후 발급한 Decoding 키",
     )
 
@@ -315,7 +353,7 @@ with st.form("search_form"):
     if period_mode == "최근 N일":
         days = st.number_input(
             "개찰일 기준 조회 기간 (일, 제한 없음)",
-            value=7, min_value=1, step=1,
+            value=7, min_value=1, max_value=MAX_DAYS, step=1,
         )
     else:
         dc1, dc2 = st.columns(2)
@@ -348,8 +386,14 @@ if submitted:
         if kw not in seen:
             seen.add(kw)
             keywords.append(kw)
-    exclude_words = [e.strip() for e in excl_input.split(",") if e.strip()]
+    exclude_words = [e.strip()[:MAX_TEXT_LEN] for e in excl_input.split(",") if e.strip()]
+    keywords = [k[:MAX_TEXT_LEN] for k in keywords]
     min_amount = min_amount_man * 10_000
+    api_key = (api_key or "").strip() or SERVER_API_KEY
+
+    if len(keywords) > MAX_KEYWORDS:
+        st.error(f"키워드는 최대 {MAX_KEYWORDS}개까지 조회할 수 있습니다.")
+        st.stop()
 
     if not api_key:
         st.error("API 키를 입력해주세요. 왼쪽 사이드바(☰)의 'API 키 설정'에 입력하세요.")
