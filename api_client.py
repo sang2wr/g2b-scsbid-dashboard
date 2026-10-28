@@ -1,10 +1,11 @@
 """나라장터 낙찰정보(용역) API 클라이언트"""
 from __future__ import annotations
+import re
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-BASE_URL = "http://apis.data.go.kr/1230000/as/ScsbidInfoService/getScsbidListSttusServcPPSSrch"
+BASE_URL = "https://apis.data.go.kr/1230000/as/ScsbidInfoService/getScsbidListSttusServcPPSSrch"
 
 # 응답 필드 → 한글 컬럼명 매핑 (실제 API 응답 기준)
 FIELD_MAP = {
@@ -26,7 +27,17 @@ FIELD_MAP = {
 }
 
 
+MAX_REQUESTS = 300  # 1회 조회당 외부 API 호출 상한 (키워드 × 구간 × 페이지) — 과도한 호출·쿼터 소진 방지
 MAX_WINDOW_DAYS = 30  # 실제 API 호출 테스트 결과 조회기간이 30일 초과 시 resultCode 07(입력범위 초과) 오류 발생 → 구간 분할 필요
+
+
+def _redact(msg: str, api_key: str) -> str:
+    """예외 메시지에 포함될 수 있는 서비스키(원문·URL 인코딩)를 가린다."""
+    from urllib.parse import quote, quote_plus
+    for secret in {api_key, quote(api_key, safe=""), quote_plus(api_key)}:
+        if secret:
+            msg = msg.replace(secret, "***")
+    return re.sub(r"(?i)(servicekey=)[^&\s\"')]+", r"\1***", msg)
 
 
 def _date_windows(start_dt: datetime, end_dt: datetime, max_days: int = MAX_WINDOW_DAYS):
@@ -65,9 +76,16 @@ def fetch_scsbid(
 
     windows = _date_windows(start_dt, end_dt)
 
-    all_rows: list[dict] = []
-    error_msg: str | None = None
     search_terms = keywords if keywords else [None]
+    if len(search_terms) * len(windows) > MAX_REQUESTS:
+        return pd.DataFrame(), (
+            f"조회 범위가 너무 큽니다 (키워드 {len(search_terms)}개 × 기간 구간 {len(windows)}개). "
+            "키워드 수를 줄이거나 조회 기간을 좁혀주세요."
+        )
+
+    all_rows: list[dict] = []
+    request_count = 0
+    error_msg: str | None = None
 
     for kw in search_terms:
         for win_start, win_end in windows:
@@ -86,6 +104,10 @@ def fetch_scsbid(
                 }
                 if kw:
                     params["bidNtceNm"] = kw
+                request_count += 1
+                if request_count > MAX_REQUESTS:
+                    error_msg = "API 호출 횟수 상한을 초과해 조회를 중단했습니다. 조건을 좁혀주세요."
+                    break
                 try:
                     resp = requests.get(BASE_URL, params=params, timeout=15)
                     resp.raise_for_status()
@@ -93,7 +115,7 @@ def fetch_scsbid(
                     header = data.get("response", {}).get("header", {})
                     result_code = str(header.get("resultCode", "00"))
                     if result_code not in ("00", "0"):
-                        error_msg = f"API 오류 [{result_code}]: {header.get('resultMsg', '알 수 없는 오류')}"
+                        error_msg = _redact(f"API 오류 [{result_code}]: {header.get('resultMsg', '알 수 없는 오류')}", api_key)
                         break
                     body = data.get("response", {}).get("body", {})
                     items = body.get("items") or []
@@ -113,7 +135,8 @@ def fetch_scsbid(
                     error_msg = f"HTTP 오류 {e.response.status_code} (키워드={kw}, 페이지={page})"
                     break
                 except Exception as e:
-                    error_msg = f"API 오류 키워드={kw} 페이지={page}: {type(e).__name__}: {e}"
+                    # requests 예외 메시지에는 서비스키가 담긴 URL이 들어갈 수 있어 가린 뒤 화면에 노출
+                    error_msg = f"API 오류 키워드={kw} 페이지={page}: {type(e).__name__}: {_redact(str(e), api_key)}"
                     break
             if error_msg:
                 break
@@ -142,7 +165,7 @@ def fetch_scsbid(
         df["참가업체수"] = pd.to_numeric(df["참가업체수"], errors="coerce").fillna(0).astype(int)
 
     if exclude_words and "공고명" in df.columns:
-        pattern = "|".join(exclude_words)
+        pattern = "|".join(re.escape(w) for w in exclude_words)  # 사용자 입력을 정규식으로 해석하지 않음
         df = df[~df["공고명"].str.contains(pattern, na=False)]
 
     if "개찰일시" in df.columns:
